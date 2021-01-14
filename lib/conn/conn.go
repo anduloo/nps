@@ -3,24 +3,25 @@ package conn
 import (
 	"bufio"
 	"bytes"
+	"ehang.io/nps/lib/goroutine"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"github.com/astaxie/beego/logs"
-	"github.com/cnlh/nps/lib/goroutine"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/cnlh/nps/lib/common"
-	"github.com/cnlh/nps/lib/crypt"
-	"github.com/cnlh/nps/lib/file"
-	"github.com/cnlh/nps/lib/mux"
-	"github.com/cnlh/nps/lib/rate"
+	"ehang.io/nps/lib/common"
+	"ehang.io/nps/lib/crypt"
+	"ehang.io/nps/lib/file"
+	"ehang.io/nps/lib/pmux"
+	"ehang.io/nps/lib/rate"
 	"github.com/xtaci/kcp-go"
 )
 
@@ -34,11 +35,33 @@ func NewConn(conn net.Conn) *Conn {
 	return &Conn{Conn: conn}
 }
 
+func (s *Conn) readRequest(buf []byte) (n int, err error) {
+	var rd int
+	for {
+		rd, err = s.Read(buf[n:])
+		if err != nil {
+			return
+		}
+		n += rd
+		if n < 4 {
+			continue
+		}
+		if string(buf[n-4:n]) == "\r\n\r\n" {
+			return
+		}
+		// buf is full, can't contain the request
+		if n == cap(buf) {
+			err = io.ErrUnexpectedEOF
+			return
+		}
+	}
+}
+
 //get host 、connection type、method...from connection
 func (s *Conn) GetHost() (method, address string, rb []byte, err error, r *http.Request) {
 	var b [32 * 1024]byte
 	var n int
-	if n, err = s.Read(b[:]); err != nil {
+	if n, err = s.readRequest(b[:]); err != nil {
 		return
 	}
 	rb = b[:n]
@@ -126,8 +149,8 @@ func (s *Conn) SetAlive(tp string) {
 		conn.SetReadDeadline(time.Time{})
 		//conn.SetKeepAlive(false)
 		//conn.SetKeepAlivePeriod(time.Duration(2 * time.Second))
-	case *mux.PortConn:
-		s.Conn.(*mux.PortConn).SetReadDeadline(time.Time{})
+	case *pmux.PortConn:
+		s.Conn.(*pmux.PortConn).SetReadDeadline(time.Time{})
 	}
 }
 
@@ -138,8 +161,8 @@ func (s *Conn) SetReadDeadlineBySecond(t time.Duration) {
 		s.Conn.(*kcp.UDPSession).SetReadDeadline(time.Now().Add(time.Duration(t) * time.Second))
 	case *net.TCPConn:
 		s.Conn.(*net.TCPConn).SetReadDeadline(time.Now().Add(time.Duration(t) * time.Second))
-	case *mux.PortConn:
-		s.Conn.(*mux.PortConn).SetReadDeadline(time.Now().Add(time.Duration(t) * time.Second))
+	case *pmux.PortConn:
+		s.Conn.(*pmux.PortConn).SetReadDeadline(time.Now().Add(time.Duration(t) * time.Second))
 	}
 }
 
@@ -371,7 +394,10 @@ func CopyWaitGroup(conn1, conn2 net.Conn, crypt bool, snappy bool, rate *rate.Ra
 	//if flow != nil {
 	//	flow.Add(in, out)
 	//}
-	err := goroutine.CopyConnsPool.Invoke(goroutine.NewConns(connHandle, conn2, flow))
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	err := goroutine.CopyConnsPool.Invoke(goroutine.NewConns(connHandle, conn2, flow, wg))
+	wg.Wait()
 	if err != nil {
 		logs.Error(err)
 	}

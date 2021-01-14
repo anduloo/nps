@@ -1,51 +1,49 @@
 package main
 
-import "C"
 import (
+	"C"
+	"ehang.io/nps/client"
+	"ehang.io/nps/lib/common"
+	"ehang.io/nps/lib/version"
 	"github.com/astaxie/beego/logs"
-	"github.com/cnlh/nps/client"
-	"time"
 )
 
-func init() {
-	logs.SetLogger(logs.AdapterFile, `{"filename":"npc.log","daily":false,"maxlines":100000,"color":true}`)
-}
-
-var status int
-var closeBefore int
 var cl *client.TRPClient
 
 //export StartClientByVerifyKey
 func StartClientByVerifyKey(serverAddr, verifyKey, connType, proxyUrl *C.char) int {
+	logs.SetLogger("store")
 	if cl != nil {
-		closeBefore = 1
 		cl.Close()
 	}
-	cl = client.NewRPClient(C.GoString(serverAddr), C.GoString(verifyKey), C.GoString(connType), C.GoString(proxyUrl), nil)
-	closeBefore = 0
+	cl = client.NewRPClient(C.GoString(serverAddr), C.GoString(verifyKey), C.GoString(connType), C.GoString(proxyUrl), nil, 60)
 	go func() {
-		for {
-			status = 1
-			cl.Start()
-			status = 0
-			if closeBefore == 1 {
-				return
-			}
-			time.Sleep(time.Second * 5)
-		}
+		cl.Start()
+		return
 	}()
 	return 1
 }
 
 //export GetClientStatus
 func GetClientStatus() int {
-	return status
+	return client.NowStatus
 }
 
 //export CloseClient
 func CloseClient() {
-	closeBefore = 1
-	cl.Close()
+	if cl != nil {
+		cl.Close()
+	}
+}
+
+//export Version
+func Version() *C.char {
+	return C.CString(version.VERSION)
+}
+
+//export Logs
+func Logs() *C.char {
+	return C.CString(common.GetLogMsg())
 }
 
 func main() {

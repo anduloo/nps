@@ -1,10 +1,10 @@
 package controllers
 
 import (
-	"github.com/cnlh/nps/lib/file"
-	"github.com/cnlh/nps/server"
-	"github.com/cnlh/nps/server/tool"
-	
+	"ehang.io/nps/lib/file"
+	"ehang.io/nps/server"
+	"ehang.io/nps/server/tool"
+
 	"github.com/astaxie/beego"
 )
 
@@ -82,7 +82,7 @@ func (s *IndexController) GetTunnel() {
 	taskType := s.getEscapeString("type")
 	clientId := s.GetIntNoErr("client_id")
 	list, cnt := server.GetTunnel(start, length, taskType, clientId, s.getEscapeString("search"))
-	s.AjaxTable(list, cnt, cnt)
+	s.AjaxTable(list, cnt, cnt, nil)
 }
 
 func (s *IndexController) Add() {
@@ -215,7 +215,7 @@ func (s *IndexController) HostList() {
 		start, length := s.GetAjaxParams()
 		clientId := s.GetIntNoErr("client_id")
 		list, cnt := file.GetDb().GetHost(start, length, clientId, s.getEscapeString("search"))
-		s.AjaxTable(list, cnt, cnt)
+		s.AjaxTable(list, cnt, cnt, nil)
 	}
 }
 

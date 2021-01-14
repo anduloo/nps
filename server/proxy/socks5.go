@@ -7,10 +7,10 @@ import (
 	"net"
 	"strconv"
 
+	"ehang.io/nps/lib/common"
+	"ehang.io/nps/lib/conn"
+	"ehang.io/nps/lib/file"
 	"github.com/astaxie/beego/logs"
-	"github.com/cnlh/nps/lib/common"
-	"github.com/cnlh/nps/lib/conn"
-	"github.com/cnlh/nps/lib/file"
 )
 
 const (
@@ -270,6 +270,7 @@ func (s *Sock5ModeServer) handleUDP(c net.Conn) {
 
 	b := common.BufPoolUdp.Get().([]byte)
 	defer common.BufPoolUdp.Put(b)
+	defer target.Close()
 	for {
 		_, err := c.Read(b)
 		if err != nil {

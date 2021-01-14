@@ -2,9 +2,11 @@ package common
 
 import (
 	"bytes"
+	"ehang.io/nps/lib/version"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"io/ioutil"
@@ -16,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cnlh/nps/lib/crypt"
+	"ehang.io/nps/lib/crypt"
 )
 
 //Get the corresponding IP address through domain name
@@ -51,7 +53,10 @@ func DomainCheck(domain string) bool {
 func CheckAuth(r *http.Request, user, passwd string) bool {
 	s := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
 	if len(s) != 2 {
-		return false
+		s = strings.SplitN(r.Header.Get("Proxy-Authorization"), " ", 2)
+		if len(s) != 2 {
+			return false
+		}
 	}
 
 	b, err := base64.StdEncoding.DecodeString(s[1])
@@ -95,7 +100,7 @@ func Getverifyval(vkey string) string {
 }
 
 //Change headers and host of request
-func ChangeHostAndHeader(r *http.Request, host string, header string, addr string) {
+func ChangeHostAndHeader(r *http.Request, host string, header string, addr string, addOrigin bool) {
 	if host != "" {
 		r.Host = host
 	}
@@ -112,8 +117,10 @@ func ChangeHostAndHeader(r *http.Request, host string, header string, addr strin
 	if prior, ok := r.Header["X-Forwarded-For"]; ok {
 		addr = strings.Join(prior, ", ") + ", " + addr
 	}
-	r.Header.Set("X-Forwarded-For", addr)
-	r.Header.Set("X-Real-IP", addr)
+	if addOrigin {
+		r.Header.Set("X-Forwarded-For", addr)
+		r.Header.Set("X-Real-IP", addr)
+	}
 }
 
 //Read file content by file path
@@ -455,4 +462,8 @@ func GetServerIpByClientIp(clientIp net.IP) string {
 	}
 	_, ip := GetIntranetIp()
 	return ip
+}
+
+func PrintVersion() {
+	fmt.Printf("Version: %s\nCore version: %s\nSame core version of client and server can connect each other\n", version.VERSION, version.GetVersion())
 }

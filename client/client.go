@@ -3,19 +3,20 @@ package client
 import (
 	"bufio"
 	"bytes"
+	"ehang.io/nps-mux"
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/astaxie/beego/logs"
 	"github.com/xtaci/kcp-go"
 
-	"github.com/cnlh/nps/lib/common"
-	"github.com/cnlh/nps/lib/config"
-	"github.com/cnlh/nps/lib/conn"
-	"github.com/cnlh/nps/lib/crypt"
-	"github.com/cnlh/nps/lib/mux"
+	"ehang.io/nps/lib/common"
+	"ehang.io/nps/lib/config"
+	"ehang.io/nps/lib/conn"
+	"ehang.io/nps/lib/crypt"
 )
 
 type TRPClient struct {
@@ -24,14 +25,16 @@ type TRPClient struct {
 	proxyUrl       string
 	vKey           string
 	p2pAddr        map[string]string
-	tunnel         *mux.Mux
+	tunnel         *nps_mux.Mux
 	signal         *conn.Conn
 	ticker         *time.Ticker
 	cnf            *config.Config
+	disconnectTime int
+	once           sync.Once
 }
 
 //new client
-func NewRPClient(svraddr string, vKey string, bridgeConnType string, proxyUrl string, cnf *config.Config) *TRPClient {
+func NewRPClient(svraddr string, vKey string, bridgeConnType string, proxyUrl string, cnf *config.Config, disconnectTime int) *TRPClient {
 	return &TRPClient{
 		svrAddr:        svraddr,
 		p2pAddr:        make(map[string]string, 0),
@@ -39,15 +42,25 @@ func NewRPClient(svraddr string, vKey string, bridgeConnType string, proxyUrl st
 		bridgeConnType: bridgeConnType,
 		proxyUrl:       proxyUrl,
 		cnf:            cnf,
+		disconnectTime: disconnectTime,
+		once:           sync.Once{},
 	}
 }
 
+var NowStatus int
+var CloseClient bool
+
 //start
 func (s *TRPClient) Start() {
+	CloseClient = false
 retry:
+	if CloseClient {
+		return
+	}
+	NowStatus = 0
 	c, err := NewConn(s.bridgeConnType, s.vKey, s.svrAddr, common.WORK_MAIN, s.proxyUrl)
 	if err != nil {
-		logs.Error("The connection server failed and will be reconnected in five seconds")
+		logs.Error("The connection server failed and will be reconnected in five seconds, error", err.Error())
 		time.Sleep(time.Second * 5)
 		goto retry
 	}
@@ -66,6 +79,7 @@ retry:
 	if s.cnf != nil && len(s.cnf.Healths) > 0 {
 		go heathCheck(s.cnf.Healths, s.signal)
 	}
+	NowStatus = 1
 	//msg connection, eg udp
 	s.handleMain()
 }
@@ -129,7 +143,7 @@ func (s *TRPClient) newUdpConn(localAddr, rAddr string, md5Password string) {
 			conn.SetUdpSession(udpTunnel)
 			logs.Trace("successful connection with client ,address %s", udpTunnel.RemoteAddr().String())
 			//read link info from remote
-			conn.Accept(mux.NewMux(udpTunnel, s.bridgeConnType), func(c net.Conn) {
+			conn.Accept(nps_mux.NewMux(udpTunnel, s.bridgeConnType, s.disconnectTime), func(c net.Conn) {
 				go s.handleChan(c)
 			})
 			break
@@ -137,14 +151,14 @@ func (s *TRPClient) newUdpConn(localAddr, rAddr string, md5Password string) {
 	}
 }
 
-//mux tunnel
+//pmux tunnel
 func (s *TRPClient) newChan() {
 	tunnel, err := NewConn(s.bridgeConnType, s.vKey, s.svrAddr, common.WORK_CHAN, s.proxyUrl)
 	if err != nil {
 		logs.Error("connect to ", s.svrAddr, "error:", err)
 		return
 	}
-	s.tunnel = mux.NewMux(tunnel.Conn, s.bridgeConnType)
+	s.tunnel = nps_mux.NewMux(tunnel.Conn, s.bridgeConnType, s.disconnectTime)
 	for {
 		src, err := s.tunnel.Accept()
 		if err != nil {
@@ -207,12 +221,12 @@ func (s *TRPClient) handleChan(src net.Conn) {
 func (s *TRPClient) handleUdp(serverConn net.Conn) {
 	// bind a local udp port
 	local, err := net.ListenUDP("udp", nil)
-	defer local.Close()
 	defer serverConn.Close()
 	if err != nil {
 		logs.Error("bind local udp port error ", err.Error())
 		return
 	}
+	defer local.Close()
 	go func() {
 		defer serverConn.Close()
 		b := common.BufPoolUdp.Get().([]byte)
@@ -279,11 +293,17 @@ loop:
 }
 
 func (s *TRPClient) Close() {
+	s.once.Do(s.closing)
+}
+
+func (s *TRPClient) closing() {
+	CloseClient = true
+	NowStatus = 0
 	if s.tunnel != nil {
-		s.tunnel.Close()
+		_ = s.tunnel.Close()
 	}
 	if s.signal != nil {
-		s.signal.Close()
+		_ = s.signal.Close()
 	}
 	if s.ticker != nil {
 		s.ticker.Stop()
